@@ -1,0 +1,28 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: Route53 alias record pointing to ALB
+
+Parameters:
+  DomainName:
+    Type: String
+  HostedZoneId:
+    Type: String
+  ALBDnsName:
+    Type: String
+  ALBHostedZoneId:
+    Type: String
+
+Resources:
+  DNSRecord:
+    Type: AWS::Route53::RecordSet
+    Properties:
+      HostedZoneId: !Ref HostedZoneId
+      Name: !Ref DomainName
+      Type: A
+      AliasTarget:
+        DNSName: !Ref ALBDnsName
+        HostedZoneId: !Ref ALBHostedZoneId
+        EvaluateTargetHealth: true
+
+Outputs:
+  DomainName:
+    Value: !Ref DomainName

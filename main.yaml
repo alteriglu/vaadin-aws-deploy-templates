@@ -1,0 +1,143 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: Root stack for Vaadin app deployment — ECS Fargate behind ALB with HTTPS
+
+Parameters:
+  AppName:
+    Type: String
+    Description: Application name used for naming all resources
+    AllowedPattern: '[a-z0-9-]+'
+    ConstraintDescription: Lowercase alphanumeric and hyphens only
+
+  DomainName:
+    Type: String
+    Description: Fully qualified domain name (e.g. app.example.com)
+
+  HostedZoneId:
+    Type: AWS::Route53::HostedZone::Id
+    Description: Route53 hosted zone ID for the domain
+
+  DatabaseUrl:
+    Type: String
+    Description: JDBC connection string for Supabase Postgres
+    NoEcho: true
+
+  ContainerPort:
+    Type: Number
+    Default: 8080
+    Description: Port the container listens on
+
+  Cpu:
+    Type: String
+    Default: '512'
+    AllowedValues: ['256', '512', '1024', '2048', '4096']
+    Description: Fargate task CPU units
+
+  Memory:
+    Type: String
+    Default: '1024'
+    AllowedValues: ['512', '1024', '2048', '4096', '8192', '16384', '30720']
+    Description: Fargate task memory in MB
+
+  DesiredCount:
+    Type: Number
+    Default: 1
+    MinValue: 0
+    MaxValue: 10
+    Description: Number of Fargate tasks to run
+
+  ImageTag:
+    Type: String
+    Default: latest
+    Description: Docker image tag to deploy
+
+  TemplatesBucketName:
+    Type: String
+    Description: S3 bucket where nested stack templates are stored
+
+  TemplatesPrefix:
+    Type: String
+    Default: templates
+    Description: S3 key prefix for nested stack templates
+
+Resources:
+  # ACM Certificate — created in root stack to avoid circular dependency
+  # (ALB needs cert ARN, DNS A record needs ALB DNS name)
+  Certificate:
+    Type: AWS::CertificateManager::Certificate
+    Properties:
+      DomainName: !Ref DomainName
+      ValidationMethod: DNS
+      DomainValidationOptions:
+        - DomainName: !Ref DomainName
+          HostedZoneId: !Ref HostedZoneId
+      Tags:
+        - Key: Name
+          Value: !Sub '${AppName}-cert'
+
+  VPCStack:
+    Type: AWS::CloudFormation::Stack
+    Properties:
+      TemplateURL: !Sub 'https://${TemplatesBucketName}.s3.amazonaws.com/${TemplatesPrefix}/vpc.yaml'
+      Parameters:
+        AppName: !Ref AppName
+
+  ALBStack:
+    Type: AWS::CloudFormation::Stack
+    Properties:
+      TemplateURL: !Sub 'https://${TemplatesBucketName}.s3.amazonaws.com/${TemplatesPrefix}/alb.yaml'
+      Parameters:
+        AppName: !Ref AppName
+        VpcId: !GetAtt VPCStack.Outputs.VpcId
+        PublicSubnet1Id: !GetAtt VPCStack.Outputs.PublicSubnet1Id
+        PublicSubnet2Id: !GetAtt VPCStack.Outputs.PublicSubnet2Id
+        CertificateArn: !Ref Certificate
+        ContainerPort: !Ref ContainerPort
+
+  DNSStack:
+    Type: AWS::CloudFormation::Stack
+    Properties:
+      TemplateURL: !Sub 'https://${TemplatesBucketName}.s3.amazonaws.com/${TemplatesPrefix}/dns.yaml'
+      Parameters:
+        DomainName: !Ref DomainName
+        HostedZoneId: !Ref HostedZoneId
+        ALBDnsName: !GetAtt ALBStack.Outputs.ALBDnsName
+        ALBHostedZoneId: !GetAtt ALBStack.Outputs.ALBHostedZoneId
+
+  ECSStack:
+    Type: AWS::CloudFormation::Stack
+    Properties:
+      TemplateURL: !Sub 'https://${TemplatesBucketName}.s3.amazonaws.com/${TemplatesPrefix}/ecs.yaml'
+      Parameters:
+        AppName: !Ref AppName
+        VpcId: !GetAtt VPCStack.Outputs.VpcId
+        PrivateSubnet1Id: !GetAtt VPCStack.Outputs.PrivateSubnet1Id
+        PrivateSubnet2Id: !GetAtt VPCStack.Outputs.PrivateSubnet2Id
+        ALBSecurityGroupId: !GetAtt ALBStack.Outputs.ALBSecurityGroupId
+        TargetGroupArn: !GetAtt ALBStack.Outputs.TargetGroupArn
+        ContainerPort: !Ref ContainerPort
+        Cpu: !Ref Cpu
+        Memory: !Ref Memory
+        DesiredCount: !Ref DesiredCount
+        ImageTag: !Ref ImageTag
+        DatabaseUrl: !Ref DatabaseUrl
+
+Outputs:
+  AppUrl:
+    Description: Application URL
+    Value: !Sub 'https://${DomainName}'
+
+  CertificateArn:
+    Description: ACM certificate ARN
+    Value: !Ref Certificate
+
+  ECRRepositoryUri:
+    Description: ECR repository URI for pushing Docker images
+    Value: !GetAtt ECSStack.Outputs.ECRRepositoryUri
+
+  ClusterName:
+    Description: ECS cluster name
+    Value: !GetAtt ECSStack.Outputs.ClusterName
+
+  ServiceName:
+    Description: ECS service name
+    Value: !GetAtt ECSStack.Outputs.ServiceName
