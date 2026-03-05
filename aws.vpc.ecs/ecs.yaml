@@ -19,10 +19,10 @@ Parameters:
     Default: 8080
   Cpu:
     Type: String
-    Default: '512'
+    Default: '1024'
   Memory:
     Type: String
-    Default: '1024'
+    Default: '2048'
   DesiredCount:
     Type: Number
     Default: 1
