@@ -38,7 +38,7 @@ Resources:
     Type: AWS::SecretsManager::Secret
     Properties:
       Name: !Sub '${AppName}/database-url'
-      Description: JDBC connection string for Supabase Postgres
+      Description: Database connection string
       SecretString: !Ref DatabaseUrl
 
   ECRRepository:
@@ -139,13 +139,11 @@ Resources:
             - ContainerPort: !Ref ContainerPort
               Protocol: tcp
           Secrets:
-            - Name: SPRING_DATASOURCE_URL
+            - Name: DATABASE_URL
               ValueFrom: !Ref DatabaseSecret
           Environment:
-            - Name: SERVER_PORT
+            - Name: PORT
               Value: !Sub '${ContainerPort}'
-            - Name: VAADIN_LAUNCH_BROWSER
-              Value: 'false'
           LogConfiguration:
             LogDriver: awslogs
             Options:
