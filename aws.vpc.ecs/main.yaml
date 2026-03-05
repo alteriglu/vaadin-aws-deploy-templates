@@ -1,5 +1,5 @@
 AWSTemplateFormatVersion: '2010-09-09'
-Description: Root stack for containerized app deployment — ECS Fargate behind ALB with HTTPS
+Description: Root stack for containerized app deployment — ECS Fargate behind ALB with CloudFront HTTPS
 
 Parameters:
   AppName:
@@ -7,14 +7,6 @@ Parameters:
     Description: Application name used for naming all resources
     AllowedPattern: '[a-z0-9-]+'
     ConstraintDescription: Lowercase alphanumeric and hyphens only
-
-  DomainName:
-    Type: String
-    Description: Fully qualified domain name (e.g. app.example.com)
-
-  HostedZoneId:
-    Type: AWS::Route53::HostedZone::Id
-    Description: Route53 hosted zone ID for the domain
 
   DatabaseUrl:
     Type: String
@@ -60,20 +52,6 @@ Parameters:
     Description: S3 key prefix for nested stack templates
 
 Resources:
-  # ACM Certificate — created in root stack to avoid circular dependency
-  # (ALB needs cert ARN, DNS A record needs ALB DNS name)
-  Certificate:
-    Type: AWS::CertificateManager::Certificate
-    Properties:
-      DomainName: !Ref DomainName
-      ValidationMethod: DNS
-      DomainValidationOptions:
-        - DomainName: !Ref DomainName
-          HostedZoneId: !Ref HostedZoneId
-      Tags:
-        - Key: Name
-          Value: !Sub '${AppName}-cert'
-
   VPCStack:
     Type: AWS::CloudFormation::Stack
     Properties:
@@ -90,18 +68,15 @@ Resources:
         VpcId: !GetAtt VPCStack.Outputs.VpcId
         PublicSubnet1Id: !GetAtt VPCStack.Outputs.PublicSubnet1Id
         PublicSubnet2Id: !GetAtt VPCStack.Outputs.PublicSubnet2Id
-        CertificateArn: !Ref Certificate
         ContainerPort: !Ref ContainerPort
 
-  DNSStack:
+  CloudFrontStack:
     Type: AWS::CloudFormation::Stack
     Properties:
-      TemplateURL: !Sub 'https://${TemplatesBucketName}.s3.amazonaws.com/${TemplatesPrefix}/dns.yaml'
+      TemplateURL: !Sub 'https://${TemplatesBucketName}.s3.amazonaws.com/${TemplatesPrefix}/cloudfront.yaml'
       Parameters:
-        DomainName: !Ref DomainName
-        HostedZoneId: !Ref HostedZoneId
+        AppName: !Ref AppName
         ALBDnsName: !GetAtt ALBStack.Outputs.ALBDnsName
-        ALBHostedZoneId: !GetAtt ALBStack.Outputs.ALBHostedZoneId
 
   ECSStack:
     Type: AWS::CloudFormation::Stack
@@ -123,12 +98,12 @@ Resources:
 
 Outputs:
   AppUrl:
-    Description: Application URL
-    Value: !Sub 'https://${DomainName}'
+    Description: Application URL (CloudFront HTTPS)
+    Value: !Sub 'https://${CloudFrontStack.Outputs.DistributionDomainName}'
 
-  CertificateArn:
-    Description: ACM certificate ARN
-    Value: !Ref Certificate
+  CloudFrontDistributionId:
+    Description: CloudFront distribution ID
+    Value: !GetAtt CloudFrontStack.Outputs.DistributionId
 
   ECRRepositoryUri:
     Description: ECR repository URI for pushing Docker images
