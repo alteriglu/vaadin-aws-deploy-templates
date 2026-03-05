@@ -1,5 +1,5 @@
 AWSTemplateFormatVersion: '2010-09-09'
-Description: VPC with 2 public + 2 private subnets across 2 AZs, single NAT Gateway
+Description: VPC with 2 public subnets across 2 AZs, VPC endpoints for AWS services (no NAT Gateway)
 
 Parameters:
   AppName:
@@ -29,7 +29,7 @@ Resources:
       VpcId: !Ref VPC
       InternetGatewayId: !Ref InternetGateway
 
-  # Public Subnets
+  # Public Subnets (used by both ALB and Fargate tasks)
   PublicSubnet1:
     Type: AWS::EC2::Subnet
     Properties:
@@ -51,46 +51,6 @@ Resources:
       Tags:
         - Key: Name
           Value: !Sub '${AppName}-public-2'
-
-  # Private Subnets
-  PrivateSubnet1:
-    Type: AWS::EC2::Subnet
-    Properties:
-      VpcId: !Ref VPC
-      CidrBlock: 10.0.3.0/24
-      AvailabilityZone: !Select [0, !GetAZs '']
-      Tags:
-        - Key: Name
-          Value: !Sub '${AppName}-private-1'
-
-  PrivateSubnet2:
-    Type: AWS::EC2::Subnet
-    Properties:
-      VpcId: !Ref VPC
-      CidrBlock: 10.0.4.0/24
-      AvailabilityZone: !Select [1, !GetAZs '']
-      Tags:
-        - Key: Name
-          Value: !Sub '${AppName}-private-2'
-
-  # NAT Gateway (single, in public subnet 1)
-  NatEIP:
-    Type: AWS::EC2::EIP
-    DependsOn: IGWAttachment
-    Properties:
-      Domain: vpc
-      Tags:
-        - Key: Name
-          Value: !Sub '${AppName}-nat-eip'
-
-  NatGateway:
-    Type: AWS::EC2::NatGateway
-    Properties:
-      AllocationId: !GetAtt NatEIP.AllocationId
-      SubnetId: !Ref PublicSubnet1
-      Tags:
-        - Key: Name
-          Value: !Sub '${AppName}-nat'
 
   # Public Route Table
   PublicRouteTable:
@@ -121,33 +81,81 @@ Resources:
       SubnetId: !Ref PublicSubnet2
       RouteTableId: !Ref PublicRouteTable
 
-  # Private Route Table
-  PrivateRouteTable:
-    Type: AWS::EC2::RouteTable
+  # VPC Endpoints — avoid NAT Gateway costs for AWS service traffic
+  VPCEndpointSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
     Properties:
+      GroupDescription: !Sub '${AppName} VPC endpoint security group'
       VpcId: !Ref VPC
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 443
+          ToPort: 443
+          CidrIp: 10.0.0.0/16
       Tags:
         - Key: Name
-          Value: !Sub '${AppName}-private-rt'
+          Value: !Sub '${AppName}-vpce-sg'
 
-  PrivateRoute:
-    Type: AWS::EC2::Route
+  ECRApiEndpoint:
+    Type: AWS::EC2::VPCEndpoint
     Properties:
-      RouteTableId: !Ref PrivateRouteTable
-      DestinationCidrBlock: 0.0.0.0/0
-      NatGatewayId: !Ref NatGateway
+      VpcId: !Ref VPC
+      ServiceName: !Sub 'com.amazonaws.${AWS::Region}.ecr.api'
+      VpcEndpointType: Interface
+      PrivateDnsEnabled: true
+      SubnetIds:
+        - !Ref PublicSubnet1
+        - !Ref PublicSubnet2
+      SecurityGroupIds:
+        - !Ref VPCEndpointSecurityGroup
 
-  PrivateSubnet1RTA:
-    Type: AWS::EC2::SubnetRouteTableAssociation
+  ECRDkrEndpoint:
+    Type: AWS::EC2::VPCEndpoint
     Properties:
-      SubnetId: !Ref PrivateSubnet1
-      RouteTableId: !Ref PrivateRouteTable
+      VpcId: !Ref VPC
+      ServiceName: !Sub 'com.amazonaws.${AWS::Region}.ecr.dkr'
+      VpcEndpointType: Interface
+      PrivateDnsEnabled: true
+      SubnetIds:
+        - !Ref PublicSubnet1
+        - !Ref PublicSubnet2
+      SecurityGroupIds:
+        - !Ref VPCEndpointSecurityGroup
 
-  PrivateSubnet2RTA:
-    Type: AWS::EC2::SubnetRouteTableAssociation
+  S3Endpoint:
+    Type: AWS::EC2::VPCEndpoint
     Properties:
-      SubnetId: !Ref PrivateSubnet2
-      RouteTableId: !Ref PrivateRouteTable
+      VpcId: !Ref VPC
+      ServiceName: !Sub 'com.amazonaws.${AWS::Region}.s3'
+      VpcEndpointType: Gateway
+      RouteTableIds:
+        - !Ref PublicRouteTable
+
+  CloudWatchLogsEndpoint:
+    Type: AWS::EC2::VPCEndpoint
+    Properties:
+      VpcId: !Ref VPC
+      ServiceName: !Sub 'com.amazonaws.${AWS::Region}.logs'
+      VpcEndpointType: Interface
+      PrivateDnsEnabled: true
+      SubnetIds:
+        - !Ref PublicSubnet1
+        - !Ref PublicSubnet2
+      SecurityGroupIds:
+        - !Ref VPCEndpointSecurityGroup
+
+  SecretsManagerEndpoint:
+    Type: AWS::EC2::VPCEndpoint
+    Properties:
+      VpcId: !Ref VPC
+      ServiceName: !Sub 'com.amazonaws.${AWS::Region}.secretsmanager'
+      VpcEndpointType: Interface
+      PrivateDnsEnabled: true
+      SubnetIds:
+        - !Ref PublicSubnet1
+        - !Ref PublicSubnet2
+      SecurityGroupIds:
+        - !Ref VPCEndpointSecurityGroup
 
 Outputs:
   VpcId:
@@ -156,7 +164,3 @@ Outputs:
     Value: !Ref PublicSubnet1
   PublicSubnet2Id:
     Value: !Ref PublicSubnet2
-  PrivateSubnet1Id:
-    Value: !Ref PrivateSubnet1
-  PrivateSubnet2Id:
-    Value: !Ref PrivateSubnet2

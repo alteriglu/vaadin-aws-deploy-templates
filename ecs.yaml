@@ -6,9 +6,9 @@ Parameters:
     Type: String
   VpcId:
     Type: String
-  PrivateSubnet1Id:
+  PublicSubnet1Id:
     Type: String
-  PrivateSubnet2Id:
+  PublicSubnet2Id:
     Type: String
   ALBSecurityGroupId:
     Type: String
@@ -34,8 +34,17 @@ Parameters:
     NoEcho: true
 
 Resources:
+  DatabaseSecret:
+    Type: AWS::SecretsManager::Secret
+    Properties:
+      Name: !Sub '${AppName}/database-url'
+      Description: JDBC connection string for Supabase Postgres
+      SecretString: !Ref DatabaseUrl
+
   ECRRepository:
     Type: AWS::ECR::Repository
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
     Properties:
       RepositoryName: !Ref AppName
       ImageScanningConfiguration:
@@ -69,6 +78,8 @@ Resources:
 
   LogGroup:
     Type: AWS::Logs::LogGroup
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
     Properties:
       LogGroupName: !Sub '/ecs/${AppName}'
       RetentionInDays: 30
@@ -86,6 +97,15 @@ Resources:
             Action: sts:AssumeRole
       ManagedPolicyArns:
         - arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy
+      Policies:
+        - PolicyName: SecretsManagerAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - secretsmanager:GetSecretValue
+                Resource: !Ref DatabaseSecret
 
   TaskRole:
     Type: AWS::IAM::Role
@@ -117,9 +137,10 @@ Resources:
           PortMappings:
             - ContainerPort: !Ref ContainerPort
               Protocol: tcp
-          Environment:
+          Secrets:
             - Name: SPRING_DATASOURCE_URL
-              Value: !Ref DatabaseUrl
+              ValueFrom: !Ref DatabaseSecret
+          Environment:
             - Name: SERVER_PORT
               Value: !Sub '${ContainerPort}'
             - Name: VAADIN_LAUNCH_BROWSER
@@ -133,7 +154,7 @@ Resources:
           HealthCheck:
             Command:
               - CMD-SHELL
-              - !Sub 'curl -f http://localhost:${ContainerPort}/ || exit 1'
+              - !Sub 'wget -q --spider http://localhost:${ContainerPort}/ || curl -sf http://localhost:${ContainerPort}/ || exit 1'
             Interval: 30
             Timeout: 5
             Retries: 3
@@ -163,10 +184,10 @@ Resources:
       LaunchType: FARGATE
       NetworkConfiguration:
         AwsvpcConfiguration:
-          AssignPublicIp: DISABLED
+          AssignPublicIp: ENABLED
           Subnets:
-            - !Ref PrivateSubnet1Id
-            - !Ref PrivateSubnet2Id
+            - !Ref PublicSubnet1Id
+            - !Ref PublicSubnet2Id
           SecurityGroups:
             - !Ref ServiceSecurityGroup
       LoadBalancers:
