@@ -36,6 +36,8 @@ Parameters:
 Resources:
   DatabaseSecret:
     Type: AWS::SecretsManager::Secret
+    DeletionPolicy: Delete
+    UpdateReplacePolicy: Delete
     Properties:
       Name: !Sub '${AppName}/database-url'
       Description: Database connection string
